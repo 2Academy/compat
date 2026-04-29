@@ -314,4 +314,278 @@ function renderLanding() {
   }
 }
 window.app_setMode = (mode) => { landingMode = mode; render(); };
-function showInputError(msg) { const el = document.getElementById("error-here"); if (el) el.innerHTM
+function showInputError(msg) { const el = document.getElementById("error-here"); if (el) el.innerHTML = `<div class="error-msg">${escapeHtml(msg)}</div>`; }
+window.app_handleCreate = async () => {
+  const name = document.getElementById("create-name").value.trim();
+  if (!name) { showInputError("Введи имя"); return; }
+  const btn = document.getElementById("create-submit");
+  btn.disabled = true; btn.innerHTML = "Создаём...";
+  try {
+    const data = { created: Date.now(), players: [{ name, answers: {}, done: false }] };
+    const id = await createBlob(data);
+    state.blobId = id; state.me = { name, slot: 0 }; state.room = data;
+    setHashRoom(id); state.stage = "room_ready"; landingMode = null; render();
+  } catch (e) {
+    showInputError("Не удалось создать комнату. Проверь соединение.");
+    btn.disabled = false; btn.innerHTML = "Создать " + ICONS.arrow;
+  }
+};
+window.app_handleJoin = async () => {
+  const name = document.getElementById("join-name").value.trim();
+  const codeRaw = document.getElementById("join-code").value.trim();
+  if (!name) { showInputError("Введи имя"); return; }
+  if (!codeRaw) { showInputError("Введи код или вставь ссылку"); return; }
+  await joinRoom(extractBlobId(codeRaw), name);
+};
+window.app_handleJoinByLink = async () => {
+  const name = document.getElementById("join-name").value.trim();
+  if (!name) { showInputError("Введи имя"); return; }
+  const id = getHashRoom();
+  if (!id) { showInputError("Ссылка некорректна"); return; }
+  await joinRoom(id, name);
+};
+async function joinRoom(id, name) {
+  try {
+    const data = await getBlob(id);
+    if (!data) { showInputError("Комната не найдена. Проверь код."); return; }
+    const existing = data.players.findIndex(p => p.name.toLowerCase() === name.toLowerCase());
+    if (existing >= 0) {
+      state.blobId = id; state.me = { name: data.players[existing].name, slot: existing }; state.room = data;
+      setHashRoom(id);
+      if (data.players[existing].done) {
+        if (data.players.length === 2 && data.players.every(p => p.done)) state.stage = "results";
+        else { state.stage = "waiting_finish"; startPolling(); }
+      } else {
+        state.answers = data.players[existing].answers || {};
+        state.questionIdx = Object.keys(state.answers).length;
+        if (state.questionIdx >= QUESTIONS.length) state.questionIdx = QUESTIONS.length - 1;
+        state.stage = "quiz";
+      }
+      render(); return;
+    }
+    if (data.players.length >= 2) { showInputError("В этой комнате уже два участника"); return; }
+    const updated = { ...data, players: [...data.players, { name, answers: {}, done: false }] };
+    await updateBlob(id, updated);
+    state.blobId = id; state.me = { name, slot: 1 }; state.room = updated;
+    state.answers = {}; state.questionIdx = 0;
+    setHashRoom(id); state.stage = "quiz"; landingMode = null; render();
+  } catch (e) { showInputError("Ошибка соединения. Попробуй ещё раз."); }
+}
+
+function renderRoomReady() {
+  const url = getShareUrl();
+  app.innerHTML = html`
+    <div class="title-block">
+      <div class="hand">вместе</div>
+      <h1>Комната готова</h1>
+      <p>Передай эту ссылку партнёру — она автоматически откроет тест на его устройстве. Можешь начинать отвечать прямо сейчас.</p>
+    </div>
+    <div class="card">
+      <div class="code-display">
+        <div class="label">Ссылка для партнёра</div>
+        <div style="font-family: 'DM Sans', sans-serif; font-size: 14px; word-break: break-all; padding: 12px 16px; background: var(--bg); border-radius: 12px; border: 1px solid var(--cream); margin-bottom: 16px; color: var(--ink);">${escapeHtml(url)}</div>
+        <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+          <button class="btn-pill" onclick="window.app_copyLink()">${state.copied ? ICONS.check : ICONS.copy}<span>${state.copied ? "Скопировано" : "Скопировать ссылку"}</span></button>
+          <button class="btn-pill" onclick="window.app_shareLink()">${ICONS.share}<span>Поделиться</span></button>
+        </div>
+        <div style="margin-top: 20px; font-family: 'DM Sans', sans-serif; font-size: 12px; color: var(--muted);">или код:&nbsp;<b style="color: var(--warm); letter-spacing: 0.1em; font-size: 14px;">${escapeHtml(state.blobId)}</b></div>
+      </div>
+      <div class="divider"></div>
+      <button class="btn-primary full" onclick="window.app_startQuiz()">Начать отвечать ${ICONS.arrow}</button>
+    </div>`;
+}
+window.app_copyLink = async () => {
+  try {
+    await navigator.clipboard.writeText(getShareUrl());
+    state.copied = true; render(); setTimeout(() => { state.copied = false; render(); }, 2000);
+  } catch (e) {
+    const ta = document.createElement("textarea"); ta.value = getShareUrl();
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+    state.copied = true; render(); setTimeout(() => { state.copied = false; render(); }, 2000);
+  }
+};
+window.app_shareLink = async () => {
+  const url = getShareUrl();
+  if (navigator.share) { try { await navigator.share({ title: "Тест на совместимость", text: "Давай пройдём тест на совместимость вместе", url }); } catch (e) {} }
+  else window.app_copyLink();
+};
+window.app_startQuiz = () => { state.stage = "quiz"; state.questionIdx = 0; state.answers = {}; render(); };
+
+function renderQuiz() {
+  const idx = state.questionIdx, q = QUESTIONS[idx], sphere = SPHERES[q.sphere];
+  const progress = (idx / QUESTIONS.length) * 100;
+  let inputHtml = "";
+  if (q.type === "agree") {
+    const current = state.answers[q.id];
+    inputHtml = html`
+      <div class="scale-labels"><span>не согласен(а)</span><span>согласен(а)</span></div>
+      <div class="scale">${[1,2,3,4,5].map(n => html`<button class="scale-btn ${current === n ? "active" : ""}" onclick="window.app_choose(${n})">${n}</button>`).join("")}</div>`;
+  } else if (q.type === "choice") {
+    const current = state.answers[q.id];
+    inputHtml = html`<div class="choice-list">${q.options.map((opt, i) => html`<button class="choice-btn ${current === i ? "active" : ""}" onclick="window.app_choose(${i})">${escapeHtml(opt)}</button>`).join("")}</div>`;
+  }
+  app.innerHTML = html`
+    <div class="progress-meta"><span class="sphere-tag ${sphere.cls}">${escapeHtml(sphere.name)}</span><span>${idx + 1} / ${QUESTIONS.length}</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width: ${progress}%"></div></div>
+    <div class="fade-up" key="${idx}">
+      <div class="card question-card">
+        <div class="hand">вопрос ${idx + 1}</div>
+        <h2 class="question-text">${escapeHtml(q.text)}</h2>
+        ${inputHtml}
+      </div>
+      ${idx > 0 ? `<button class="btn-back" onclick="window.app_prevQuestion()">← предыдущий вопрос</button>` : ""}
+    </div>`;
+}
+window.app_choose = async (val) => {
+  const q = QUESTIONS[state.questionIdx];
+  state.answers[q.id] = val; render();
+  setTimeout(async () => {
+    if (state.questionIdx === QUESTIONS.length - 1) await submitAnswers();
+    else { state.questionIdx++; render(); }
+  }, 220);
+};
+window.app_prevQuestion = () => { if (state.questionIdx > 0) { state.questionIdx--; render(); } };
+async function submitAnswers() {
+  app.innerHTML = html`<div class="card" style="text-align: center; padding: 60px 28px;"><div class="spinner"></div><p class="sans" style="color: var(--muted);">Сохраняем ответы...</p></div>`;
+  try {
+    const fresh = await getBlob(state.blobId);
+    if (!fresh) throw new Error("not found");
+    fresh.players[state.me.slot] = { ...fresh.players[state.me.slot], answers: state.answers, done: true };
+    await updateBlob(state.blobId, fresh);
+    state.room = fresh;
+    if (fresh.players.length === 2 && fresh.players.every(p => p.done)) state.stage = "results";
+    else { state.stage = "waiting_finish"; startPolling(); }
+    render();
+  } catch (e) {
+    app.innerHTML = html`<div class="card" style="text-align: center;"><p>Не удалось сохранить ответы. Проверь соединение.</p><button class="btn-primary" onclick="window.app_retrySubmit()" style="margin-top: 16px;">Повторить</button></div>`;
+  }
+}
+window.app_retrySubmit = () => submitAnswers();
+
+function renderWaiting() {
+  const partner = state.room?.players?.find((_, i) => i !== state.me?.slot);
+  const partnerName = partner?.name, partnerDone = partner?.done;
+  const subText = partnerDone ? "Партнёр уже ответил! Сейчас откроем результат..." : "Ты закончил(а). Ждём ответы от партнёра — страница обновится сама, когда он(а) завершит.";
+  app.innerHTML = html`
+    <div class="title-block">
+      <div class="hand">вместе</div>
+      <h1>${partnerDone ? "Готово" : "Ждём партнёра"}</h1>
+      <p>${subText}</p>
+    </div>
+    <div class="card" style="text-align: center;">
+      <div class="spinner"></div>
+      <div class="sans" style="color: var(--muted); font-size: 13px;">Ссылка для партнёра</div>
+      <div style="font-family: 'DM Sans', sans-serif; font-size: 13px; word-break: break-all; padding: 10px 14px; background: var(--bg); border-radius: 12px; border: 1px solid var(--cream); margin: 8px 0 12px;">${escapeHtml(getShareUrl())}</div>
+      <button class="btn-pill" onclick="window.app_copyLink()">${state.copied ? ICONS.check : ICONS.copy}<span>${state.copied ? "Скопировано" : "Скопировать"}</span></button>
+      ${partnerName ? html`<div class="sans" style="margin-top: 16px; color: var(--muted); font-size: 14px;">${escapeHtml(partnerName)} ${partnerDone ? "ответил(а) ✓" : "ещё отвечает..."}</div>` : ""}
+    </div>`;
+}
+function startPolling() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(async () => {
+    try {
+      const fresh = await getBlob(state.blobId);
+      if (!fresh) return;
+      state.room = fresh;
+      if (fresh.players.length === 2 && fresh.players.every(p => p.done)) {
+        clearInterval(state.pollTimer); state.pollTimer = null;
+        state.stage = "results"; render();
+      } else if (state.stage === "waiting_finish") render();
+    } catch (e) {}
+  }, 5000);
+}
+
+function interpret(p) {
+  if (p >= 85) return { label: "Удивительно высокая", color: "#15803d" };
+  if (p >= 70) return { label: "Сильная", color: "#65a30d" };
+  if (p >= 55) return { label: "Хорошая с зонами роста", color: "#c2410c" };
+  if (p >= 40) return { label: "Смешанная — есть над чем работать", color: "#b45309" };
+  return { label: "Много расхождений", color: "#9f1239" };
+}
+function renderResults() {
+  const a = state.room.players[0], b = state.room.players[1];
+  const result = calculateResults(a.answers, b.answers);
+  const recs = getRecommendations(result.spherePercents);
+  const verdict = interpret(result.overall);
+  const sortedSpheres = Object.entries(result.spherePercents).sort((x, y) => y[1] - x[1]);
+  app.innerHTML = html`
+    <div class="fade-up">
+      <div class="results-title"><div class="hand">результат</div><h1>${escapeHtml(a.name)} & ${escapeHtml(b.name)}</h1></div>
+      <div class="card overall-card">
+        <div class="overall-meta">Общая совместимость</div>
+        <div class="overall-number">${result.overall}<span class="pct">%</span></div>
+        <div class="verdict" style="color: ${verdict.color}">${verdict.label}</div>
+      </div>
+      <div class="card">
+        <h3 class="section-h">По сферам жизни</h3>
+        ${sortedSpheres.map(([key, pct]) => html`
+          <div class="sphere-row">
+            <div class="meta"><span class="name ${SPHERES[key].cls}">${escapeHtml(SPHERES[key].name)}</span><span class="pct">${pct}%</span></div>
+            <div class="bar"><div class="fill" style="width: ${pct}%; background: ${SPHERES[key].color};"></div></div>
+          </div>`).join("")}
+      </div>
+      ${result.matches.length > 0 ? html`
+        <div class="card">
+          <h3 class="section-h"><span style="color: var(--rose)">${ICONS.heart}</span>Где вы совпали</h3>
+          <p class="section-sub">Темы, в которых ваши ответы оказались очень близкими</p>
+          <ul class="item-list">${result.matches.slice(0, 6).map(q => html`<li><span class="item-sphere ${SPHERES[q.sphere].cls}">${escapeHtml(SPHERES[q.sphere].name)}</span>${escapeHtml(q.text)}</li>`).join("")}</ul>
+        </div>` : ""}
+      ${result.gaps.length > 0 ? html`
+        <div class="card">
+          <h3 class="section-h"><span style="color: var(--warm)">${ICONS.users}</span>Где видение разное</h3>
+          <p class="section-sub">Это не «плохо» — это темы, на которые стоит поговорить отдельно</p>
+          <ul class="item-list" style="list-style: none; padding-left: 0;">
+            ${result.gaps.slice(0, 6).map(({q, a: ansA, b: ansB}) => html`
+              <li class="gap-item">
+                <span class="item-sphere ${SPHERES[q.sphere].cls}">${escapeHtml(SPHERES[q.sphere].name)}</span>
+                <div class="gap-text">${escapeHtml(q.text)}</div>
+                <div class="gap-answers">
+                  <span><b>${escapeHtml(a.name)}:</b> ${q.type === "agree" ? `${ansA} из 5` : escapeHtml(q.options[ansA])}</span>
+                  <span><b>${escapeHtml(b.name)}:</b> ${q.type === "agree" ? `${ansB} из 5` : escapeHtml(q.options[ansB])}</span>
+                </div>
+              </li>`).join("")}
+          </ul>
+        </div>` : ""}
+      <div class="card dark">
+        <h3 class="section-h"><span style="color: var(--rose)">${ICONS.spark}</span>Что с этим делать</h3>
+        <p class="section-sub muted-text">Точечные рекомендации под ваши слабые сферы</p>
+        ${recs.map(r => html`
+          <div class="rec-item" style="border-left-color: ${r.color === "#1c1917" ? "var(--rose)" : r.color};">
+            <div class="rec-sphere" style="color: ${r.color === "#1c1917" ? "var(--rose)" : "#fbbf24"};">${escapeHtml(r.sphere)}</div>
+            <div class="rec-text">${escapeHtml(r.text)}</div>
+          </div>`).join("")}
+      </div>
+      <div class="card">
+        <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 12px;">Что под капотом</h3>
+        <p class="sans" style="font-size: 13px; color: var(--muted); line-height: 1.6;">Вопросы построены на работе Джона Готтмана (40 лет лонгитюдных исследований пар), модели PREPARE/ENRICH Дэвида Олсона, концепции «языков любви» Гэри Чепмена и теории привязанности. Сферы взвешены по силе предсказательной валидности: ценности, коммуникация и интимность вносят больший вклад, чем досуг или быт. Это инструмент для разговора, а не диагноз.</p>
+      </div>
+      <div class="footer-action"><button class="btn-pill" onclick="window.app_restart()">${ICONS.rotate} <span>Новый тест</span></button></div>
+    </div>`;
+}
+window.app_restart = () => {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.stage = "landing"; state.blobId = null; state.me = null; state.room = null;
+  state.answers = {}; state.questionIdx = 0; landingMode = null;
+  setHashRoom(null); render();
+};
+
+function getHashRoom() { const m = window.location.hash.match(/room=([a-zA-Z0-9_-]+)/); return m ? m[1] : null; }
+function setHashRoom(id) {
+  if (id) { if (window.history.replaceState) window.history.replaceState(null, "", "#room=" + id); else window.location.hash = "room=" + id; }
+  else { if (window.history.replaceState) window.history.replaceState(null, "", window.location.pathname + window.location.search); }
+}
+function getShareUrl() { return window.location.origin + window.location.pathname + "#room=" + state.blobId; }
+function extractBlobId(input) {
+  const hashMatch = input.match(/[#&]room=([a-zA-Z0-9_-]+)/);
+  if (hashMatch) return hashMatch[1];
+  const urlMatch = input.match(/jsonBlob\/([a-zA-Z0-9_-]+)/);
+  if (urlMatch) return urlMatch[1];
+  return input.trim();
+}
+
+render();
+</script>
+</body>
+</html>
