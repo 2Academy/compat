@@ -1,28 +1,53 @@
-const API_BASE = "https://api.npoint.io";
-
-async function createBlob(data) {
-  const res = await fetch(API_BASE, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data)
-  });
-  if (!res.ok) throw new Error("Не удалось создать комнату");
-  const json = await res.json();
-  return json.id;
-}
-async function getBlob(id) {
-  const res = await fetch(`${API_BASE}/${id}`, {
-    headers: { "Accept": "application/json" }
-  });
-  if (!res.ok) return null;
-  return await res.json();
-}
-async function updateBlob(id, data) {
-  const res = await fetch(`${API_BASE}/${id}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data)
-  });
-  if (!res.ok) throw new Error("Не удалось обновить");
-  return true;
-}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#fdf6ee">
+<title>Тест на совместимость</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=DM+Sans:wght@400;500;600&family=Caveat:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fdf6ee;
+    --ink: #1c1917;
+    --warm: #c2410c;
+    --rose: #be185d;
+    --cream: #f5e9d7;
+    --paper: #fff9f0;
+    --muted: #78716c;
+    --green: #15803d;
+    --amber: #b45309;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { -webkit-font-smoothing: antialiased; }
+  body {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    background: var(--bg);
+    background-image:
+      radial-gradient(at 15% 20%, var(--cream) 0%, transparent 50%),
+      radial-gradient(at 85% 80%, #fce7e7 0%, transparent 50%);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 24px 16px;
+    line-height: 1.4;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+  .sans { font-family: "DM Sans", system-ui, sans-serif; }
+  .hand { font-family: "Caveat", cursive; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; }
+  input { font-family: inherit; }
+  .title-block { text-align: center; margin-bottom: 32px; }
+  .title-block .hand { color: var(--rose); font-size: 28px; margin-bottom: -8px; }
+  .title-block h1 { font-size: clamp(36px, 7vw, 56px); font-weight: 600; line-height: 1.05; letter-spacing: -0.02em; margin-bottom: 12px; }
+  .title-block p { color: var(--muted); font-size: 15px; line-height: 1.6; }
+  .card { background: var(--paper); border: 1px solid var(--cream); border-radius: 20px; padding: 28px; box-shadow: 0 1px 0 rgba(0,0,0,0.04), 0 20px 40px -20px rgba(120,80,40,0.15); margin-bottom: 16px; }
+  .card.dark { background: var(--ink); color: var(--bg); border: none; }
+  .card.dark .muted-text { color: #a8a29e; }
+  .btn-primary { background: var(--ink); color: var(--bg); border-radius: 999px; padding: 14px 28px; font-size: 15px; font-weight: 500; letter-spacing: 0.02em; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.15s, opacity 0.15s; font-family: "DM Sans", sans-serif; }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-primary:active { transform: scale(0.97); }
+  .btn-primary:disabled { background: #d6d3d1; opacity: 0.5; cursor: not-allowed; }
+  .btn-primary.full { width: 100%; }
+  .btn-outline { background: transparent; border: 1px solid var(--ink); color: var(--ink); border-radius: 999px; padding: 13px 28p
